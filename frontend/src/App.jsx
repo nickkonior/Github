@@ -1,56 +1,65 @@
-import { useEffect, useRef, useState } from "react"; // Προσθέσαμε το useState
+import { useEffect, useRef, useState } from "react";
 import { Lipsync } from "wawa-lipsync";
-import { Canvas } from "@react-three/fiber"; // ΝΕΟ: Για τα 3D
-import { Experience } from "./experience";     // ΝΕΟ: Το αρχείο που φτιάξαμε
+import { Canvas } from "@react-three/fiber";
+import { Experience } from "./experience";
 
 export default function App() {
   const audioRef = useRef(null);
   const lipsyncRef = useRef(null);
-  const [viseme, setViseme] = useState(""); // ΝΕΟ: Εδώ αποθηκεύουμε την κίνηση για να τη στείλουμε στο Avatar
+  const [viseme, setViseme] = useState("");
 
   useEffect(() => {
-    if (!lipsyncRef.current) { // Μικρή ασφάλεια για να μην κρασάρει
-        lipsyncRef.current = new Lipsync();
-        // Συνδέουμε τον ήχο μόνο αν υπάρχει το audioRef
-        if(audioRef.current) {
-            lipsyncRef.current.connectAudio(audioRef.current);
-        }
+    if (!lipsyncRef.current) {
+      // Μικρή ασφάλεια για να μην κρασάρει
+      lipsyncRef.current = new Lipsync();
+      // Συνδέουμε τον ήχο μόνο αν υπάρχει το audioRef
+      if (audioRef.current) {
+        lipsyncRef.current.connectAudio(audioRef.current);
+      }
     }
   }, []);
 
   const playAudio = async () => {
     await audioRef.current.play();
-    analyzeAudio(); // Ξεκινάμε την ανάλυση
+    analyzeAudio(); //start
   };
 
   const analyzeAudio = () => {
     lipsyncRef.current.processAudio();
-    
-    // Κρατάμε την παλιά σου λειτουργικότητα (Logs)
-    console.log("Viseme:", lipsyncRef.current.viseme); 
-    
-    // ΝΕΟ: Ενημερώνουμε και το Avatar
+    // Logs
+    console.log("Viseme:", lipsyncRef.current.viseme);
     setViseme(lipsyncRef.current.viseme);
-
-    // Συνεχίζουμε τη λούπα όσο παίζει ο ήχος
-    if(!audioRef.current.paused) {
-        requestAnimationFrame(analyzeAudio);
+    // loop while sound is playing
+    if (!audioRef.current.paused) {
+      requestAnimationFrame(analyzeAudio);
     }
   };
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
-        
-      {/* ΝΕΟ: Ο χώρος του 3D Avatar (Πιάνει όλη την οθόνη από πίσω) */}
-      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0 }}>
-          <Canvas camera={{ position: [0, 0.9, 1.8], fov: 65 }}>
-            {/* Περνάμε το viseme στο Avatar */}
-            <Experience viseme={viseme} />
-          </Canvas>
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 0,
+        }}
+      >
+        <Canvas camera={{ position: [0, 0.9, 1.8], fov: 65 }}>
+          <Experience viseme={viseme} />
+        </Canvas>
       </div>
-
-      {/* ΤΟ ΠΑΛΙΟ UI ΣΟΥ (Το βάζουμε από πάνω με zIndex) */}
-      <div style={{ position: "relative", zIndex: 10, padding: 20, color: "white", backgroundColor: "rgba(0,0,0,0.5)" }}>
+      <div
+        style={{
+          position: "relative",
+          zIndex: 10,
+          padding: 20,
+          color: "white",
+          backgroundColor: "rgba(0,0,0,0.5)",
+        }}
+      >
         <h1>Wawa Lipsync – Test</h1>
 
         <audio
@@ -60,7 +69,8 @@ export default function App() {
           crossOrigin="anonymous"
         />
 
-        <br /><br />
+        <br />
+        <br />
 
         <button
           onClick={playAudio}
@@ -68,8 +78,7 @@ export default function App() {
         >
           ▶️ Play + Lipsync
         </button>
-        
-        {/* Ένας δείκτης για να βλέπουμε τι διαβάζει */}
+
         <p>Current Viseme: {viseme}</p>
       </div>
     </div>
