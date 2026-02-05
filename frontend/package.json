@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:host": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
