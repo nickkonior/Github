@@ -1,221 +1,305 @@
 import { OrbitControls, useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef } from "react";
 
 /**
- * Mapping from wawa-lipsync visemes to ARKit blendshapes
- * Each viseme maps to one or more ARKit blendshapes with intensity values
+ * Mapping from wawa-lipsync visemes to available blendshapes
+ * This model ONLY has: mouthOpen and mouthSmile
+ * 
+ * Strategy:
+ * - Open mouth sounds (aa, O, U, etc.) -> mouthOpen
+ * - Smile sounds (E, I, etc.) -> mouthSmile
+ * - Combine both for certain sounds
  */
-const VISEME_TO_ARKIT_MAP = {
-  // Silence - neutral mouth
-  viseme_sil: {},
+const visemeToARKitMap = {
+  viseme_sil: {}, // Silence
   
-  // "aa" sound (as in "father") - open jaw, open mouth
   viseme_aa: {
-    jawOpen: 0.7,
-    mouthOpen: 0.6,
+    mouthOpen: 0.9,
   },
   
-  // "E" sound (as in "bed") - slight smile, medium jaw
   viseme_E: {
-    jawOpen: 0.3,
-    mouthSmileLeft: 0.4,
-    mouthSmileRight: 0.4,
+    mouthSmile: 0.6,
     mouthOpen: 0.3,
   },
   
-  // "I" sound (as in "see") - wide smile
   viseme_I: {
-    jawOpen: 0.2,
-    mouthSmileLeft: 0.6,
-    mouthSmileRight: 0.6,
+    mouthSmile: 0.8,
+    mouthOpen: 0.2,
   },
   
-  // "O" sound (as in "go") - rounded lips, open jaw
   viseme_O: {
-    jawOpen: 0.5,
-    mouthFunnel: 0.5,
-    mouthPucker: 0.3,
+    mouthOpen: 0.7,
   },
   
-  // "U" sound (as in "food") - pursed/puckered lips
   viseme_U: {
-    jawOpen: 0.2,
-    mouthPucker: 0.7,
-    mouthFunnel: 0.4,
+    mouthOpen: 0.5,
   },
   
-  // "PP" sound (p, b, m) - lips pressed together
   viseme_PP: {
-    mouthClose: 0.8,
-    mouthPressLeft: 0.5,
-    mouthPressRight: 0.5,
+    mouthOpen: 0.0, // Closed
   },
   
-  // "FF" sound (f, v) - lower lip tucked under teeth
   viseme_FF: {
-    mouthFunnel: 0.3,
-    mouthLowerDownLeft: 0.4,
-    mouthLowerDownRight: 0.4,
+    mouthOpen: 0.3,
   },
   
-  // "TH" sound (th) - tongue between teeth
   viseme_TH: {
-    jawOpen: 0.2,
-    mouthOpen: 0.2,
-    mouthLowerDownLeft: 0.3,
-    mouthLowerDownRight: 0.3,
+    mouthOpen: 0.4,
   },
   
-  // "DD" sound (t, d) - tongue tap
   viseme_DD: {
-    jawOpen: 0.25,
-    mouthOpen: 0.2,
+    mouthOpen: 0.35,
   },
   
-  // "kk" sound (k, g) - back of tongue
   viseme_kk: {
-    jawOpen: 0.3,
-    mouthOpen: 0.25,
+    mouthOpen: 0.5,
   },
   
-  // "CH" sound (ch, j, sh) - teeth close, lips forward
   viseme_CH: {
-    jawOpen: 0.15,
-    mouthFunnel: 0.4,
-    mouthShrugUpper: 0.3,
+    mouthOpen: 0.3,
   },
   
-  // "SS" sound (s, z) - teeth close together
   viseme_SS: {
-    jawOpen: 0.1,
-    mouthSmileLeft: 0.2,
-    mouthSmileRight: 0.2,
-  },
-  
-  // "nn" sound (n, l) - tongue to roof
-  viseme_nn: {
-    jawOpen: 0.2,
+    mouthSmile: 0.4,
     mouthOpen: 0.15,
   },
   
-  // "RR" sound (r) - lips slightly rounded
+  viseme_nn: {
+    mouthOpen: 0.25,
+  },
+  
   viseme_RR: {
-    jawOpen: 0.25,
-    mouthPucker: 0.2,
-    mouthOpen: 0.2,
+    mouthOpen: 0.4,
   },
 };
 
-// Smoothing factor for interpolation (0 = instant, 1 = no change)
-const LERP_FACTOR = 0.35;
+// Smoothing factor for interpolation (0-1, lower = smoother)
+const LERP_FACTOR = 0.3;
 
 // Linear interpolation helper
-const lerp = (start, end, factor) => start + (end - start) * factor;
+const lerp = (current, target, factor) => current + (target - current) * factor;
 
 export const Experience = ({ viseme }) => {
-  const { nodes, scene } = useGLTF("/model.glb");
+  const { scene } = useGLTF("/avatar.glb");
   
-  // Store current blendshape values for smooth interpolation
-  const currentInfluences = useRef({});
-  
-  // Find the mesh with morph targets (ARKit blendshapes)
-  const headMesh = useMemo(() => {
-    // Common node names for Avaturn/RPM models
-    const possibleNames = ["Wolf3D_Head", "Wolf3D_Avatar", "Head", "head"];
+  // Store references to meshes with morph targets
+  const headMeshRef = useRef(null);
+  const teethMeshRef = useRef(null);
+  const hasTraversed = useRef(false);
+  const hasLoggedAnimation = useRef(false);
+
+  /**
+   * Traverse the scene to find all meshes with morphTargetInfluences
+   * This runs once when the model is loaded
+   */
+  useEffect(() => {
+    if (hasTraversed.current || !scene) return;
+
+    console.log("🔍 Traversing scene to find morph targets...");
+    console.log("Scene object:", scene);
     
-    for (const name of possibleNames) {
-      if (nodes[name]?.morphTargetDictionary) {
-        console.log("Found morph targets on:", name);
-        console.log("Available blendshapes:", Object.keys(nodes[name].morphTargetDictionary));
-        return nodes[name];
+    let allMeshes = [];
+    
+    scene.traverse((object) => {
+      // Log ALL meshes for debugging
+      if (object.isMesh) {
+        allMeshes.push({
+          name: object.name,
+          hasMorphTargets: !!object.morphTargetInfluences,
+          morphCount: object.morphTargetInfluences?.length || 0,
+        });
+        
+        console.log(`Found mesh: "${object.name}"`, {
+          type: object.type,
+          hasMorphTargetInfluences: !!object.morphTargetInfluences,
+          hasMorphTargetDictionary: !!object.morphTargetDictionary,
+          morphCount: object.morphTargetInfluences?.length || 0,
+        });
+      }
+      
+      if (object.isMesh && object.morphTargetInfluences && object.morphTargetDictionary) {
+        const blendshapeCount = object.morphTargetInfluences.length;
+        
+        // THE FIX: Get blendshape names from geometry, not dictionary
+        const blendshapeNames = object.geometry?.morphAttributes?.position 
+          ? Object.keys(object.geometry.userData?.targetNames || object.morphTargetDictionary)
+          : Object.keys(object.morphTargetDictionary);
+        
+        console.log(`\n✅ Found mesh with morph targets: "${object.name}"`);
+        console.log(`   Blendshape count: ${blendshapeCount}`);
+        console.log(`   Available blendshapes:`, blendshapeNames);
+        console.log(`   Raw dictionary:`, object.morphTargetDictionary);
+        console.log(`   Geometry userData:`, object.geometry?.userData);
+        
+        // Try to identify head vs teeth based on name
+        const nameLower = object.name.toLowerCase();
+        if (nameLower.includes("teeth")) {
+          teethMeshRef.current = object;
+          console.log("   → Assigned as TEETH mesh");
+        } else if (nameLower.includes("head") || nameLower.includes("wolf3d_head")) {
+          // Prioritize Wolf3D_Head over other meshes
+          headMeshRef.current = object;
+          console.log("   → Assigned as HEAD mesh (priority)");
+        } else if (!headMeshRef.current && !nameLower.includes("eye")) {
+          // First non-teeth, non-eye mesh with morphs
+          headMeshRef.current = object;
+          console.log("   → Assigned as HEAD mesh (fallback)");
+        }
+      }
+    });
+
+    console.log("\n📊 Summary of all meshes found:", allMeshes);
+
+    if (!headMeshRef.current) {
+      console.error("❌ No mesh with morph targets found in the scene!");
+      console.error("Total meshes found:", allMeshes.length);
+      console.error("This could mean:");
+      console.error("1. The Avaturn model doesn't have blendshapes exported");
+      console.error("2. The model file is incorrect");
+      console.error("3. The model needs to be re-exported with ARKit blendshapes");
+    } else {
+      console.log("\n✅ Setup complete!");
+      console.log(`Head mesh: ${headMeshRef.current.name}`);
+      console.log(`Head morph count: ${headMeshRef.current.morphTargetInfluences.length}`);
+      if (teethMeshRef.current) {
+        console.log(`Teeth mesh: ${teethMeshRef.current.name}`);
       }
     }
-    
-    // Fallback: find any mesh with morph targets
-    const meshWithMorphs = Object.values(nodes).find(
-      (node) => node.morphTargetDictionary && node.morphTargetInfluences
-    );
-    
-    if (meshWithMorphs) {
-      console.log("Found morph targets on fallback mesh");
-      console.log("Available blendshapes:", Object.keys(meshWithMorphs.morphTargetDictionary));
-    }
-    
-    return meshWithMorphs;
-  }, [nodes]);
 
-  // Also check for teeth mesh (some models have separate teeth)
-  const teethMesh = useMemo(() => {
-    return nodes.Wolf3D_Teeth || nodes.Teeth || null;
-  }, [nodes]);
+    hasTraversed.current = true;
+  }, [scene]);
 
-  // Initialize current influences
-  useEffect(() => {
-    if (headMesh?.morphTargetDictionary) {
-      Object.keys(headMesh.morphTargetDictionary).forEach((key) => {
-        currentInfluences.current[key] = 0;
-      });
-    }
-  }, [headMesh]);
-
-  // Use useFrame for smooth real-time animation
+  /**
+   * Animation loop - applies viseme blendshapes with smooth interpolation
+   */
   useFrame(() => {
-    if (!headMesh?.morphTargetDictionary || !headMesh?.morphTargetInfluences) {
+    const headMesh = headMeshRef.current;
+    
+    if (!headMesh?.morphTargetInfluences || !headMesh?.geometry?.morphAttributes?.position) {
       return;
     }
 
-    const dictionary = headMesh.morphTargetDictionary;
     const influences = headMesh.morphTargetInfluences;
     
-    // Get target values from the mapping
-    const targetBlendshapes = VISEME_TO_ARKIT_MAP[viseme] || {};
+    // Get the actual blendshape names from geometry userData or create proper mapping
+    let blendshapeNames = [];
+    if (headMesh.geometry.userData?.targetNames) {
+      blendshapeNames = headMesh.geometry.userData.targetNames;
+    } else if (headMesh.geometry.morphAttributes?.position) {
+      // Fallback: Use morphAttribute keys
+      blendshapeNames = Object.keys(headMesh.geometry.morphAttributes.position).map((_, i) => {
+        // Try to get name from somewhere
+        return headMesh.geometry.morphAttributes.position[i]?.name || `morph_${i}`;
+      });
+    }
+    
+    // Get target values from the viseme mapping
+    const targetBlendshapes = visemeToARKitMap[viseme] || {};
 
-    // Update all blendshapes with interpolation
-    Object.keys(dictionary).forEach((blendshapeName) => {
-      const index = dictionary[blendshapeName];
-      const targetValue = targetBlendshapes[blendshapeName] || 0;
-      const currentValue = currentInfluences.current[blendshapeName] || 0;
+    // Debug log once per viseme change
+    const shouldLog = !hasLoggedAnimation.current && viseme !== "";
+    if (shouldLog) {
+      console.log("🎭 Animation frame");
+      console.log("Current viseme:", viseme);
+      console.log("Target blendshapes:", targetBlendshapes);
+      console.log("Blendshape names:", blendshapeNames);
+      console.log("Influences BEFORE:", [...influences]);
+      hasLoggedAnimation.current = true;
+    }
+
+    // Since we know from logs that index 0 = mouthOpen and index 1 = mouthSmile
+    // Let's hardcode this mapping for now
+    const indexMap = {
+      mouthOpen: 0,
+      mouthSmile: 1
+    };
+
+    // Reset all influences to 0 first
+    for (let i = 0; i < influences.length; i++) {
+      influences[i] = lerp(influences[i], 0, LERP_FACTOR);
+    }
+
+    // Apply target blendshapes
+    Object.entries(targetBlendshapes).forEach(([blendshapeName, targetValue]) => {
+      const index = indexMap[blendshapeName];
       
-      // Smooth interpolation
-      const newValue = lerp(currentValue, targetValue, LERP_FACTOR);
-      
-      // Update stored value and mesh
-      currentInfluences.current[blendshapeName] = newValue;
-      influences[index] = newValue;
+      if (index !== undefined) {
+        const currentValue = influences[index];
+        const newValue = lerp(currentValue, targetValue, LERP_FACTOR);
+        
+        if (shouldLog) {
+          console.log(`Applying ${blendshapeName}: index=${index}, current=${currentValue}, target=${targetValue}, new=${newValue}`);
+        }
+        
+        influences[index] = newValue;
+      }
     });
 
-    // Also update teeth if they have matching morph targets
-    if (teethMesh?.morphTargetDictionary && teethMesh?.morphTargetInfluences) {
-      Object.keys(teethMesh.morphTargetDictionary).forEach((blendshapeName) => {
-        const index = teethMesh.morphTargetDictionary[blendshapeName];
-        const value = currentInfluences.current[blendshapeName] || 0;
-        teethMesh.morphTargetInfluences[index] = value;
+    if (shouldLog) {
+      console.log("Influences AFTER:", [...influences]);
+      console.log("mouthOpen should be:", targetBlendshapes.mouthOpen || 0);
+      console.log("mouthSmile should be:", targetBlendshapes.mouthSmile || 0);
+      
+      // Reset flag after 2 seconds to allow logging again
+      setTimeout(() => { hasLoggedAnimation.current = false; }, 2000);
+    }
+
+    // Simply set the influences - no other updates needed
+    headMesh.morphTargetInfluences = influences;
+
+    // Sync teeth mesh if it exists
+    const teethMesh = teethMeshRef.current;
+    if (teethMesh?.morphTargetInfluences) {
+      const teethInfluences = teethMesh.morphTargetInfluences;
+      
+      // Use the same hardcoded index map
+      const indexMap = {
+        mouthOpen: 0,
+        mouthSmile: 1
+      };
+      
+      // Reset teeth influences first
+      for (let i = 0; i < teethInfluences.length; i++) {
+        teethInfluences[i] = lerp(teethInfluences[i], 0, LERP_FACTOR);
+      }
+      
+      // Copy values from head mesh using the index map
+      Object.entries(targetBlendshapes).forEach(([blendshapeName, targetValue]) => {
+        const index = indexMap[blendshapeName];
+        
+        if (index !== undefined) {
+          teethInfluences[index] = lerp(teethInfluences[index], targetValue, LERP_FACTOR);
+        }
       });
+      
+      teethMesh.morphTargetInfluences = teethInfluences;
     }
   });
 
   return (
     <>
-      {/* Camera controls - target the head area */}
-      <OrbitControls 
-        target={[0, 0.5, 0]} 
+      {/* Camera controls - focused on head and shoulders */}
+      <OrbitControls
+        target={[0, 1.6, 0]}
         enablePan={false}
-        minDistance={0.5}
-        maxDistance={3}
+        minDistance={0.3}
+        maxDistance={2}
+        minPolarAngle={Math.PI / 3}
+        maxPolarAngle={Math.PI / 1.5}
       />
-      
-      {/* Lighting for better visibility */}
+
+      {/* Lighting setup */}
       <ambientLight intensity={1.2} />
-      <directionalLight position={[5, 5, 5]} intensity={0.8} />
-      <directionalLight position={[-5, 5, 5]} intensity={0.4} />
-      
-      {/* Avatar model - positioned to show head and upper body */}
-      <primitive 
-        object={scene} 
-        position={[0, -0.5, 0]} 
-        scale={1} 
-      />
+      <directionalLight position={[1, 2, 2]} intensity={0.8} />
+      <directionalLight position={[-1, 1, 1]} intensity={0.4} />
+      <pointLight position={[0, 1.8, 0.5]} intensity={0.3} />
+
+      {/* Avatar model - positioned to show head clearly */}
+      <primitive object={scene} position={[0, 0, 0]} scale={1} rotation={[0, 0, 0]} />
     </>
   );
 };
+
+// Preload the model
+useGLTF.preload("/avatar.glb"); 

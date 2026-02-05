@@ -42,16 +42,16 @@ export default function App() {
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
         
       {/* ΝΕΟ: Ο χώρος του 3D Avatar (Πιάνει όλη την οθόνη από πίσω) */}
-      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0 }}>
-          <Canvas camera={{ position: [0, 0.9, 1.8], fov: 65 }}>
+<div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0 }}>
+          <Canvas camera={{ position: [0, 1.6, 0.8], fov: 50 }}>
             {/* Περνάμε το viseme στο Avatar */}
             <Experience viseme={viseme} />
           </Canvas>
       </div>
 
       {/* ΤΟ ΠΑΛΙΟ UI ΣΟΥ (Το βάζουμε από πάνω με zIndex) */}
-      <div style={{ position: "relative", zIndex: 10, padding: 20, color: "white", backgroundColor: "rgba(0,0,0,0.5)" }}>
-        <h1>Wawa Lipsync – Test</h1>
+      <div style={{ position: "relative", zIndex: 10, padding: 20, color: "white", backgroundColor: "rgba(0,0,0,0.7)", maxWidth: "400px" }}>
+        <h1 style={{ margin: 0 }}>Wawa Lipsync – Test</h1>
 
         <audio
           ref={audioRef}
@@ -64,13 +64,66 @@ export default function App() {
 
         <button
           onClick={playAudio}
-          style={{ padding: "10px 20px", fontSize: "16px", cursor: "pointer" }}
+          style={{ 
+            padding: "10px 20px", 
+            fontSize: "16px", 
+            cursor: "pointer",
+            backgroundColor: "#4CAF50",
+            color: "white",
+            border: "none",
+            borderRadius: "5px",
+            marginRight: "10px"
+          }}
         >
           ▶️ Play + Lipsync
         </button>
+
+        <button
+          onClick={() => setViseme("viseme_aa")}
+          style={{ 
+            padding: "10px 20px", 
+            fontSize: "16px", 
+            cursor: "pointer",
+            backgroundColor: "#2196F3",
+            color: "white",
+            border: "none",
+            borderRadius: "5px",
+            marginRight: "10px"
+          }}
+        >
+          Test AA
+        </button>
+
+        <button
+          onClick={() => setViseme("viseme_E")}
+          style={{ 
+            padding: "10px 20px", 
+            fontSize: "16px", 
+            cursor: "pointer",
+            backgroundColor: "#FF9800",
+            color: "white",
+            border: "none",
+            borderRadius: "5px"
+          }}
+        >
+          Test E
+        </button>
         
         {/* Ένας δείκτης για να βλέπουμε τι διαβάζει */}
-        <p>Current Viseme: {viseme}</p>
+        <p style={{ 
+          fontSize: "18px", 
+          fontWeight: "bold",
+          backgroundColor: "rgba(255,255,255,0.1)",
+          padding: "10px",
+          borderRadius: "5px",
+          marginTop: "10px"
+        }}>
+          Current Viseme: <span style={{ color: "#4CAF50" }}>{viseme || "viseme_sil"}</span>
+        </p>
+        
+        <p style={{ fontSize: "12px", opacity: 0.8, marginTop: "20px" }}>
+          ⚠️ Check F12 Console for debug logs about morph targets
+        </p>
       </div>
     </div>
   );
